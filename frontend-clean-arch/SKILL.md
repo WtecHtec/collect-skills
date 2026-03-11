@@ -3,7 +3,7 @@ name: frontend-clean-arch
 description: >
   将整洁架构原则应用到前端（React/Vue 等）项目中。
   当用户询问前端项目结构、代码架构、关注点分离、如何组织 domain 逻辑、hooks、
-  utils 或组件时，使用此技能。即使用户只是随口说"这段逻辑放哪里？"、
+  utils 或组件时使用此技能。即使用户只是随口说"这段逻辑放哪里？"、
   "我的 hooks 怎么组织？"、"组件越来越臃肿"、"业务逻辑怎么不写进 UI？"
   也要触发。当用户提到 domain、use-case、view-model、repository 模式，
   或任何前端分层架构概念时同样触发。
@@ -11,89 +11,107 @@ description: >
 
 # 前端整洁架构 Skill
 
-帮助用户设计并落地受整洁架构启发的前端分层方案。
-各层为：**Domain → Use Case → View Model（Hooks）→ UI**，
-**Utils** 作为无状态辅助层独立存在。
-
-## 核心心智模型
+## 核心分层
 
 ```
 ┌─────────────────────────────┐  ← 最易变，强依赖框架
-│            UI               │    组件、页面、样式
+│            UI               │  组件、页面、样式
 ├─────────────────────────────┤
-│      View Model / Hooks     │    toXxxViewModel() + useXxx() hooks
+│       Hook                  │  组合层：调 Use Case + 消费 ViewModel
 ├─────────────────────────────┤
-│         Use Case            │    业务流程编排
+│       View Model            │  UI 展示逻辑：格式化、文案、颜色
 ├─────────────────────────────┤
-│          Domain             │  ← 最稳定，零框架依赖
-│  实体 · 业务规则 · IRepo    │
+│       Use Case              │  异步流程：调接口、聚合数据、错误处理
+├─────────────────────────────┤
+│       Domain                │  ← 最稳定，零框架、零 IO
+│  实体 · 业务规则             │
 └─────────────────────────────┘
-          Utils（纯函数，不依赖任何层）
+         Utils（纯函数，不依赖任何层）
 ```
 
-**依赖规则**：外层可以导入内层，内层绝不导入外层。Domain 层零框架 import。
+**依赖规则**：外层可以导入内层，内层绝不导入外层。
 
 ---
 
-## 各层定义
+## 各层职责与边界
 
 ### Domain（领域层）
-业务核心。纯 TypeScript/JavaScript —— 不引入 React、Vue、fetch。
 
-- **实体（Entities）**：反映业务概念的数据结构（`Order`、`User`）
-- **业务规则（Business Rules）**：表达领域不变量的纯函数（`canCancelOrder`、`isEligibleForDiscount`）
-- **仓储接口（Repository Interfaces）**：数据访问契约（只有接口，没有实现）
-- **领域事件 / 错误（Domain Events / Errors）**：类型化的事件与错误类
+**职责**：纯业务规则。入参和出参都是内存中的对象，不涉及任何 IO。
+
+**边界判断**：Domain 里永远不出现 `async`、`fetch`、`repo`。只要出现了 `await`，就说明职责越界。
 
 ```ts
 // domain/entities/order.ts
 export interface Order {
   id: string;
+  userId: string;
   items: OrderItem[];
   status: 'pending' | 'paid' | 'shipped' | 'cancelled';
   totalCents: number;
 }
 
 // domain/rules/orderRules.ts
+// 纯函数：入参是已拿到的数据，出参是判断结果
 export const canCancelOrder = (order: Order): boolean =>
   order.status === 'pending';
 
-// domain/repositories/IOrderRepository.ts
-export interface IOrderRepository {
-  findById(id: string): Promise<Order>;
-  save(order: Order): Promise<void>;
-}
+export const calcDiscount = (order: Order, user: User): number =>
+  user.isVip ? order.totalCents * 0.9 : order.totalCents;
 ```
+
+**变化触发点**：产品说"审核状态流转规则改了"、"VIP 折扣逻辑变了"——改 Domain。
 
 ---
 
 ### Use Case（用例层）
-编排业务流程。只依赖 Domain 接口，不依赖具体基础设施或 UI。
 
-- 每个类/函数对应一个用户意图（`PlaceOrderUseCase`、`CancelOrderUseCase`）
-- 接收 DTO（普通对象），返回结果
-- 负责校验、抛错、副作用排序
+**职责**：处理所有异步流程——调接口、聚合多个数据源、错误处理、权限校验。返回干净的 Domain 数据，不做任何 UI 相关的转换。
+
+**边界判断**：Use Case 返回值里不应出现 `statusLabel`、`formattedTotal`、颜色值等展示字段。一旦出现，说明越界到 ViewModel 了。
 
 ```ts
+// use-cases/getOrderDetail.ts
+export const getOrderDetail = async (
+  id: string,
+  repo: IOrderRepository,
+): Promise<Order> => {
+  const order = await repo.findById(id);
+  if (!order) throw new NotFoundError('订单不存在');
+  return order;  // 返回 Domain 数据，不管 UI 怎么展示
+};
+
+// 需要聚合多个接口时，做的是业务数据组合，不是 UI 转换
+export const getOrderWithUser = async (
+  id: string,
+  orderRepo: IOrderRepository,
+  userRepo: IUserRepository,
+): Promise<{ order: Order; user: User }> => {
+  const order = await orderRepo.findById(id);
+  const user = await userRepo.findById(order.userId);
+  return { order, user };  // 还是 Domain 数据，只是组合了
+};
+
 // use-cases/cancelOrder.ts
 export const cancelOrder = async (
-  orderId: string,
+  id: string,
   repo: IOrderRepository,
 ): Promise<void> => {
-  const order = await repo.findById(orderId);
+  const order = await repo.findById(id);
   if (!canCancelOrder(order)) throw new DomainError('该订单不可取消');
   await repo.save({ ...order, status: 'cancelled' });
 };
 ```
 
+**变化触发点**：后端接口拆分或合并、新增权限校验、多接口聚合逻辑变化——改 Use Case。
+
 ---
 
-### View Model + Hooks（视图模型层）
+### View Model（视图模型层）
 
-这是前端整洁架构的核心洞察：**拆成两部分**。
+**职责**：把 Domain 数据转换成 UI 需要的展示结构。纯函数，无副作用，可独立单测。
 
-**第一部分 —— `toXxxViewModel()` 纯函数**
-将原始 Domain 实体映射为 UI 所需的展示结构。没有 hooks，没有副作用，可独立单测。
+**关键洞察**：View Model 复用 Domain 规则，但面向的是展示需求。`canCancelOrder` 是业务规则（Domain），`statusLabel: '待支付'` 是展示需求（ViewModel）——两者方向不同。
 
 ```ts
 // view-models/orderViewModel.ts
@@ -102,7 +120,7 @@ export interface OrderViewModel {
   statusLabel: string;      // '待支付' 而非 'pending'
   statusColor: string;      // '#F59E0B'
   formattedTotal: string;   // '¥ 299.00'
-  canCancel: boolean;       // 调用 domain 规则
+  canCancel: boolean;       // 复用 domain 规则的结果
   itemCount: string;        // '共 3 件'
 }
 
@@ -111,53 +129,69 @@ export const toOrderViewModel = (order: Order): OrderViewModel => ({
   statusLabel: ORDER_STATUS_LABELS[order.status],
   statusColor: ORDER_STATUS_COLORS[order.status],
   formattedTotal: formatCurrency(order.totalCents),
-  canCancel: canCancelOrder(order),           // ← 复用 domain 规则
+  canCancel: canCancelOrder(order),   // ← 复用 domain 规则，不重复写
   itemCount: `共 ${order.items.length} 件`,
 });
 ```
 
-**第二部分 —— `useXxx()` hook**
-hook 是 ViewModel 的*运行容器*：取数据、调用 `toXxxViewModel()`、
-管理 UI 状态（`loading`、`error`）、暴露 Use Case 动作。
+**变化触发点**：产品说"这个页面的状态文案改一下"、"金额显示格式变了"——改 ViewModel。
+
+**何时提取 ViewModel**（不是每个 hook 都需要）：
+- 映射字段超过 3-4 个
+- 有条件判断逻辑（`status === 'pending'` 这类）
+- 同一份数据在多个页面复用
+- 你想单独验证"这个映射逻辑对不对"，但不想跑完整组件
+
+---
+
+### Hook（组合层）
+
+**职责**：Hook 是 ViewModel 的运行容器，同时也是 Use Case 的触发入口。读的方向走 ViewModel，写的方向走 Use Case。
+
+```
+用户操作 → hook → Use Case（写）
+                → ViewModel（读）← Domain
+```
 
 ```ts
 // hooks/useOrder.ts
-export const useOrder = (orderId: string) => {
-  const [vm, setVm] = useState<OrderViewModel | null>(null);
+export const useOrder = (id: string) => {
+  const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    orderRepo.findById(orderId)
-      .then(order => setVm(toOrderViewModel(order)))   // ← 在这里组合
+    getOrderDetail(id, orderRepo)   // ← 调 Use Case，不直接调 repo
+      .then(setOrder)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [orderId]);
+  }, [id]);
 
-  const cancel = async () => {
-    await cancelOrder(orderId, orderRepo);
-    // 刷新数据
+  const cancel = () => cancelOrder(id, orderRepo);  // ← 写操作走 Use Case
+
+  return {
+    vm: order ? toOrderViewModel(order) : null,  // ← 读操作走 ViewModel
+    loading,
+    error,
+    cancel,
   };
-
-  return { vm, loading, error, cancel };
 };
 ```
 
-> **为什么要拆？** 纯函数 `toXxxViewModel` 无需任何 mock 即可单元测试。
-> hook 只负责编排。组件保持纯粹的展示职责。
+**关于 hook 是否可以直接调 repo**：严格边界下 hook 只调 Use Case。但如果查询逻辑真的没有任何附加流程（无错误处理、无权限校验、无聚合），可以酌情省略 Use Case 这一层，直接调 repo。有流程就包，没有不必强求。
 
 ---
 
 ### UI（展示层）
-纯展示。消费 ViewModel props，永远不接触原始 Domain 数据。
 
-- **组件（Components）**：无状态，只接收 `vm` props
-- **容器 / 页面（Containers / Pages）**：调用 `useXxx()`，将 `vm` 向下传递
-- 不写业务逻辑，不做格式化，不调用 domain 规则
+**职责**：纯展示。消费 ViewModel，永远不接触原始 Domain 数据，不写业务规则，不做格式化。
 
 ```tsx
-// ui/components/OrderCard.tsx
-const OrderCard = ({ vm, onCancel }: { vm: OrderViewModel; onCancel: () => void }) => (
+// ui/components/OrderCard.tsx —— 无状态，只接收 vm
+const OrderCard = ({ vm, onCancel }: {
+  vm: OrderViewModel;
+  onCancel: () => void;
+}) => (
   <div>
     <span style={{ color: vm.statusColor }}>{vm.statusLabel}</span>
     <span>{vm.formattedTotal}</span>
@@ -166,7 +200,7 @@ const OrderCard = ({ vm, onCancel }: { vm: OrderViewModel; onCancel: () => void 
   </div>
 );
 
-// ui/pages/OrderPage.tsx
+// ui/pages/OrderPage.tsx —— 调 hook，向下传 vm
 const OrderPage = ({ id }: { id: string }) => {
   const { vm, loading, error, cancel } = useOrder(id);
   if (loading) return <Spinner />;
@@ -178,12 +212,8 @@ const OrderPage = ({ id }: { id: string }) => {
 ---
 
 ### Utils（工具层）
-零层依赖的纯函数。可跨项目复用。
 
-- 格式化：`formatCurrency`、`formatDate`、`formatRelativeTime`
-- 校验：`isValidEmail`、`isValidPhone`
-- 辅助函数：数组 / 对象 / 字符串操作
-- 常量与枚举
+**职责**：纯函数，零层依赖，可跨项目复用。
 
 ```ts
 // utils/currency.ts
@@ -194,57 +224,100 @@ export const formatCurrency = (cents: number, currency = 'CNY'): string =>
 
 ---
 
+## 边界速查
+
+| 问题 | 该改哪层 |
+|---|---|
+| 审核状态流转规则变了 | Domain |
+| 后端接口拆成两个 | Use Case |
+| 订单状态文案改成中文 | ViewModel |
+| 金额显示格式变了 | ViewModel |
+| 组件里要展示新字段 | ViewModel + UI |
+| 新增取消前需要二次确认 | Use Case + Hook |
+
+---
+
+## 反模式识别
+
+| 反模式 | 信号 | 修复 |
+|---|---|---|
+| 业务规则在 JSX | `order.status === 'pending' && <button>` | 移到 Domain，通过 `vm.canCancel` 暴露 |
+| 格式化在组件 | `(price / 100).toFixed(2)` 在 JSX | 移到 ViewModel 或 Utils |
+| Use Case 返回展示字段 | 返回值含 `statusLabel`、颜色值 | 这是 ViewModel 的事，Use Case 只返回 Domain 数据 |
+| Domain 有 async | `async findById` 出现在实体或规则文件 | IO 全部移到 Use Case |
+| Hook 内联映射逻辑 | `useEffect` 回调里直接拼 `statusLabel` | 提取为 `toXxxViewModel` 纯函数 |
+
+---
+
+## 测试策略
+
+每层独立测试，互不依赖：
+
+```ts
+// Domain —— 纯函数，零 mock
+it('pending 订单可以取消', () => {
+  expect(canCancelOrder({ status: 'pending', ...rest })).toBe(true);
+  expect(canCancelOrder({ status: 'paid', ...rest })).toBe(false);
+});
+
+// ViewModel —— 纯函数，零 mock
+it('正确格式化金额和状态', () => {
+  const vm = toOrderViewModel({ status: 'pending', totalCents: 29900, ...rest });
+  expect(vm.formattedTotal).toBe('¥299.00');
+  expect(vm.canCancel).toBe(true);
+  expect(vm.statusLabel).toBe('待支付');
+});
+
+// Use Case —— 内存 repo 替换真实接口，无需 mock 库
+class InMemoryOrderRepo implements IOrderRepository {
+  private store = new Map<string, Order>();
+  async findById(id: string) { return this.store.get(id)!; }
+  async save(order: Order) { this.store.set(order.id, order); }
+}
+
+it('取消 pending 订单', async () => {
+  const repo = new InMemoryOrderRepo();
+  await repo.save({ id: '1', status: 'pending', ...rest });
+  await cancelOrder('1', repo);
+  expect((await repo.findById('1')).status).toBe('cancelled');
+});
+
+// UI —— 传入 mock vm，只测渲染行为
+it('canCancel 为 true 时显示取消按钮', () => {
+  const vm = { canCancel: true, statusLabel: '待支付', ...rest };
+  render(<OrderCard vm={vm} onCancel={jest.fn()} />);
+  expect(screen.getByText('取消订单')).toBeInTheDocument();
+});
+```
+
+---
+
 ## 目录结构
 
 ```
 src/
 ├── domain/
-│   ├── entities/
-│   ├── rules/
-│   └── repositories/       # 只有接口
-├── use-cases/
-├── view-models/             # toXxxViewModel 纯函数
-├── hooks/                   # useXxx hooks（组合 VM + use-case）
+│   ├── entities/         # 业务实体类型
+│   ├── rules/            # 纯函数业务规则
+│   └── repositories/     # 仓储接口（只有 interface，无实现）
+├── use-cases/            # 异步流程编排
+├── view-models/          # toXxxViewModel 纯函数
+├── hooks/                # 组合层：Use Case + ViewModel
 ├── ui/
-│   ├── components/          # 无状态，纯 props
-│   └── pages/               # 调用 hooks，向下传 vm
+│   ├── components/       # 无状态展示组件
+│   └── pages/            # 调 hook，向下传 vm
 ├── infrastructure/
-│   └── repositories/        # IRepo 的具体实现
-└── utils/
+│   └── repositories/     # IRepository 的真实实现（fetch/axios）
+└── utils/                # 格式化、校验等纯工具函数
 ```
 
 ---
 
-## 常见反模式识别
+## 分层价值
 
-| 反模式 | 问题 | 修复方案 |
-|---|---|---|
-| 业务规则写在 JSX | `order.status === 'pending' && <button>` | 移到 domain，通过 `vm.canCancel` 暴露 |
-| 格式化写在组件 | `(price / 100).toFixed(2)` 在 JSX 中 | 移到 `toXxxViewModel` 或 utils |
-| 叶子组件直接调 API | `useEffect(() => fetch(...))` 写在叶子组件 | 提升到 hook，向下传 vm |
-| 臃肿的 hook 内联映射 | 映射逻辑直接写在 `useEffect` 回调里 | 提取为 `toXxxViewModel` 纯函数 |
-| Domain 层 import React | 实体文件里 `import { useState }` | Domain 必须零框架依赖 |
+分层的本质是**把"容易变的"和"不容易变的"隔离开**：
 
----
-
-## 场景导航
-
-**"我的组件越来越臃肿"**
-→ 检查 JSX 里是否有业务规则或格式化逻辑，提取到 domain 规则和 `toXxxViewModel`。
-
-**"这段逻辑应该放哪里？"**
-→ 依次问：是业务不变量（domain 规则）？是流程编排（use-case）？
-是展示转换（view-model）？是通用工具（utils）？
-
-**"怎么测试？"**
-→ `toXxxViewModel` = 纯函数单测，零 mock。
-→ Use Case = 用内存仓储测试（用 Map 实现 `IRepository`）。
-→ Domain 规则 = 纯函数测试。
-→ 组件 = 传入 mock vm 做快照或交互测试。
-
-**"我在用 Zustand / Pinia / Redux"**
-→ Store 存原始 Domain 实体。Selector 就是 View Model 层：
-写 `selectOrderViewModel(state)` selector，内部调用 `toOrderViewModel`，
-hook 消费 selector。
-
-详见 `references/patterns.md`，包含 React + Zustand、Vue + Pinia 的具体集成方案。
+- Domain 变得最慢（业务规则稳定）
+- Use Case 跟着接口走（后端变则变）
+- ViewModel 跟着 UI 需求走（产品改稿则变）
+- 每种变化只影响它该影响的层，不会扩散
