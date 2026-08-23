@@ -1,6 +1,6 @@
 # AI POSTer 内容二创工作流
 
-一套面向 AI 创作者的高质量内容生产与二创工作流。从「热点雷达」到「素材策展」，再到「独特创作角度」，解决选题同质化、内容像摘要、观点生硬等痛点，帮助创作者建立具备个人风格的内容体系。
+一套面向 AI 创作者的高质量内容生产与二创工作流。从「热点雷达」到「素材策展」，再到「独特创作角度」与「深度洞察成稿」，解决选题同质化、内容像摘要、观点生硬、缺少抓力等痛点，帮助创作者建立具备个人风格与深度思考的内容体系。
 
 ---
 
@@ -10,7 +10,7 @@
 flowchart LR
     A["1. 热点捕捉\n(AIHOT)"] --> B["2. 素材策展\n(curate-content-materials)"]
     B --> C["3. 创作角度\n(develop-content-angles)"]
-    C --> D["4. 内容成稿\n(高质量发布)"]
+    C --> D["4. 洞察成稿\n(write-ai-insight-articles)"]
 ```
 
 | 阶段 | 核心模块 / Skill | 职责说明 | 解决的痛点 |
@@ -18,6 +18,7 @@ flowchart LR
 | **01. 热点捕捉** | [AIHOT](https://aihot.virxact.com/aihot-skill/README.md) | 聚合多平台热榜与趋势信息，作为线索雷达 | 信息孤岛、追热点不及时 |
 | **02. 筛选素材** | [curate-content-materials](../aipost/curate-content-materials) | 宽进窄出，从真实反应识别认知/立场/情绪/叙事缺口 | 选题偏技术、不知写什么、素材过载 |
 | **03. 创作角度** | [develop-content-angles](../aipost/develop-content-angles) | 寻找张力空白，从近景/场景/远景提炼独特二创切入点 | 内容像摘要、换汤不换药、缺少个人视角 |
+| **04. 洞察成稿** | [write-ai-insight-articles](../aipost/write-ai-insight-articles) | 把角度与事实写成有强钩子、冷观察与人本视角的成稿 | 稿件像新闻摘要/通稿/教程、开头没动力、缺少读者利害与思考深度 |
 
 ---
 
@@ -36,6 +37,7 @@ mkdir -p .agents/skills
 # 2. 将 aipost 内的技能复制到项目的技能目录中
 cp -r aipost/curate-content-materials .agents/skills/
 cp -r aipost/develop-content-angles .agents/skills/
+cp -r aipost/write-ai-insight-articles .agents/skills/
 ```
 
 ### 2. 全局安装（跨项目复用）
@@ -49,6 +51,7 @@ cp -r aipost/develop-content-angles .agents/skills/
 mkdir -p ~/.gemini/config/skills
 cp -r aipost/curate-content-materials ~/.gemini/config/skills/
 cp -r aipost/develop-content-angles ~/.gemini/config/skills/
+cp -r aipost/write-ai-insight-articles ~/.gemini/config/skills/
 ```
 
 ---
@@ -79,6 +82,14 @@ cp -r aipost/develop-content-angles ~/.gemini/config/skills/
     - **远景**：建立更大的社会、趋势或文化连接
   - **内容弧线**：`具体细节 -> 隐藏一层 -> 回到人的处境`
 
+### 步骤四：AI 洞察文章写作技能（write-ai-insight-articles）
+- **路径**：[`./write-ai-insight-articles`](../aipost/write-ai-insight-articles)
+- **核心能力**：
+  - **强钩子法则**：`强钩子 = 可核验的异常事实 × 尚未解释的认知缺口 × 与读者有关的后果`（首屏交付张力、最低背景、打开缺口、建立利害）。
+  - **五种叙事发动机**：变化（转变何在）、落差（承诺与真实）、机制（为何做到与失效边界）、后果（责任与成本转移）、人的处境（具体动作与选择）。
+  - **技术解释人本化**：`可见结果 → 中间机制 → 依赖条件 → 失败边界 → 对人的影响`。
+  - **事实五层与克制文风**：严格区分已发生事实 / 来源主张 / 外部验证 / 作者判断 / 未知；拒绝通稿腔、营销口播与伪深度。
+
 ---
 
 ## 🚀 快速上手示例 (Quick Start)
@@ -97,6 +108,10 @@ cp -r aipost/develop-content-angles ~/.gemini/config/skills/
 > **Prompt**：  
 > “这是我写的一篇二创草稿，感觉像在做信息摘要。请使用 `develop-content-angles` 帮我做原稿诊断，找出停留在转述的地方并重构角度与内容骨架。”
 
+### 场景 4：基于角度与素材成稿深度洞察文章
+> **Prompt**：  
+> “请使用 `write-ai-insight-articles` 技能，基于我选定的主角度 [你的主角度] 和以下核心素材 [素材事实]，写一篇约 1800 字的深度洞察 Markdown 文章。要求开头使用强钩子，将技术机制解释清楚并落到人的处境，保持客观克制的语言风格。”
+
 ---
 
 ## 💡 创作原则与避坑指南
@@ -104,3 +119,4 @@ cp -r aipost/develop-content-angles ~/.gemini/config/skills/
 1. **避免技术偏置**：不要默认所有素材都需要从技术原理展开，允许从情绪、画面、立场和具体选择切入。
 2. **拒绝机械反常识**：不要为了“有观点”而强行制造反直觉标题，张力必须来自真实经验或可靠事实。
 3. **先有反应，再找角度**：如果素材无法引发真实的惊讶、怀疑、认同或共鸣，优先暂存或放弃，切忌强行制造态度。
+4. **事实为基，克制判断**：先让事实出现再让判断长出来，严格区分官方口径与外部实测，把技术变化落到具体人的选择、代价与责任。
